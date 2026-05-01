@@ -7,7 +7,7 @@ const Datastore = require('nedb-promises');
 const fs = require('fs');
 
 const app = express();
-const PORT = process.env.PORT || 8080;
+const PORT = process.env.PORT || 3000;
 const JWT_SECRET = process.env.JWT_SECRET || 'taif-secret-2026';
 
 if (!fs.existsSync('./data')) fs.mkdirSync('./data');
