@@ -5,11 +5,11 @@ const cors = require('cors');
 const path = require('path');
 const Datastore = require('nedb-promises');
 const fs = require('fs');
- 
+
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 8080;
 const JWT_SECRET = process.env.JWT_SECRET || 'taif-secret-2026';
- 
+
 if (!fs.existsSync('./data')) fs.mkdirSync('./data');
 const db = {
   users:    Datastore.create({ filename: './data/users.db',    autoload: true }),
@@ -17,10 +17,10 @@ const db = {
   sessions: Datastore.create({ filename: './data/sessions.db', autoload: true }),
   messages: Datastore.create({ filename: './data/messages.db', autoload: true }),
 };
- 
+
 app.use(cors()); app.use(express.json({ limit: '10mb' }));
 app.use(express.static(__dirname));
- 
+
 function auth(req, res, next) {
   const h = req.headers.authorization;
   if (!h) return res.status(401).json({ error: 'Unauthorized' });
@@ -31,8 +31,7 @@ function adminOnly(req, res, next) {
   if (req.user.role !== 'admin') return res.status(403).json({ error: 'Admins only' });
   next();
 }
- 
-// ── SETUP ──
+
 app.get('/api/setup/status', async (req, res) => {
   const count = await db.users.count({});
   res.json({ setupRequired: count === 0 });
@@ -47,16 +46,14 @@ app.post('/api/setup', async (req, res) => {
   const token = jwt.sign({ id: user._id, username: user.username, name: user.name, role: user.role }, JWT_SECRET, { expiresIn: '30d' });
   res.json({ token, user: { id: user._id, name: user.name, role: user.role, username: user.username } });
 });
- 
-// ── AUTH ──
+
 app.post('/api/login', async (req, res) => {
   const user = await db.users.findOne({ username: req.body.username });
   if (!user || !(await bcrypt.compare(req.body.password, user.password))) return res.status(401).json({ error: 'Invalid credentials' });
   const token = jwt.sign({ id: user._id, username: user.username, name: user.name, role: user.role }, JWT_SECRET, { expiresIn: '30d' });
   res.json({ token, user: { id: user._id, name: user.name, role: user.role, username: user.username } });
 });
- 
-// ── REGISTER (any role) ──
+
 app.post('/api/register', async (req, res) => {
   const { name, username, password, role } = req.body;
   if (!name || !username || !password) return res.status(400).json({ error: 'All fields required' });
@@ -67,14 +64,13 @@ app.post('/api/register', async (req, res) => {
   const token = jwt.sign({ id: user._id, username: user.username, name: user.name, role: user.role }, JWT_SECRET, { expiresIn: '30d' });
   res.json({ token, user: { id: user._id, name: user.name, role: user.role, username: user.username } });
 });
- 
+
 app.get('/api/me', auth, async (req, res) => {
   const user = await db.users.findOne({ _id: req.user.id });
   if (!user) return res.status(404).json({ error: 'User not found' });
   res.json({ id: user._id, name: user.name, role: user.role, username: user.username, studentId: user.studentId || null });
 });
- 
-// ── CHANGE PASSWORD ──
+
 app.post('/api/change-password', auth, async (req, res) => {
   const { currentPassword, newPassword } = req.body;
   if (!currentPassword || !newPassword) return res.status(400).json({ error: 'All fields required' });
@@ -85,8 +81,7 @@ app.post('/api/change-password', auth, async (req, res) => {
   await db.users.update({ _id: req.user.id }, { $set: { password: hash } });
   res.json({ ok: true });
 });
- 
-// ── USERS ──
+
 app.get('/api/users', auth, adminOnly, async (req, res) => {
   const u = await db.users.find({});
   res.json(u.map(u => ({ id: u._id, name: u.name, username: u.username, role: u.role, studentId: u.studentId||null, createdAt: u.createdAt })));
@@ -112,20 +107,17 @@ app.delete('/api/users/:id', auth, adminOnly, async (req, res) => {
   await db.users.remove({ _id: req.params.id }, {});
   res.json({ ok: true });
 });
- 
-// ── LINK PARENT ──
+
 app.post('/api/parents/link', auth, adminOnly, async (req, res) => {
   const { parentId, studentId } = req.body;
   if (!parentId || !studentId) return res.status(400).json({ error: 'parentId and studentId required' });
   await db.users.update({ _id: parentId }, { $set: { studentId } });
   res.json({ ok: true });
 });
- 
-// ── STUDENTS ──
+
 app.get('/api/students', auth, async (req, res) => {
   let q = {};
   if (req.user.role === 'parent') {
-    // Parent sees only their linked child
     const user = await db.users.findOne({ _id: req.user.id });
     if (!user || !user.studentId) return res.json([]);
     q = { _id: user.studentId };
@@ -142,18 +134,9 @@ app.post('/api/students', auth, async (req, res) => {
   res.json({ ...s, id: s._id });
 });
 app.patch('/api/students/:id', auth, async (req, res) => {
-  const { name, age, commLevel, developmentAreas, effectiveStrategies, iepDate, goals, notes, color, photo } = req.body;
+  const allowed = ['name','age','commLevel','developmentAreas','effectiveStrategies','iepDate','goals','notes','color','photo'];
   const update = {};
-  if (name !== undefined) update.name = name;
-  if (age !== undefined) update.age = age;
-  if (commLevel !== undefined) update.commLevel = commLevel;
-  if (developmentAreas !== undefined) update.developmentAreas = developmentAreas;
-  if (effectiveStrategies !== undefined) update.effectiveStrategies = effectiveStrategies;
-  if (iepDate !== undefined) update.iepDate = iepDate;
-  if (goals !== undefined) update.goals = goals;
-  if (notes !== undefined) update.notes = notes;
-  if (color !== undefined) update.color = color;
-  if (photo !== undefined) update.photo = photo;
+  allowed.forEach(k => { if (req.body[k] !== undefined) update[k] = req.body[k]; });
   await db.students.update({ _id: req.params.id }, { $set: update });
   const s = await db.students.findOne({ _id: req.params.id });
   res.json({ ...s, id: s._id });
@@ -162,13 +145,11 @@ app.delete('/api/students/:id', auth, adminOnly, async (req, res) => {
   await db.students.remove({ _id: req.params.id }, {});
   res.json({ ok: true });
 });
- 
-// ── SESSIONS ──
+
 app.get('/api/sessions', auth, async (req, res) => {
   const { studentId, limit } = req.query;
   let q = {};
   if (req.user.role === 'parent') {
-    // Parent sees sessions for their child only
     const user = await db.users.findOne({ _id: req.user.id });
     if (!user || !user.studentId) return res.json([]);
     q.studentId = user.studentId;
@@ -198,8 +179,7 @@ app.delete('/api/sessions/:id', auth, async (req, res) => {
   await db.sessions.remove(q, {});
   res.json({ ok: true });
 });
- 
-// ── STATS ──
+
 app.get('/api/stats', auth, async (req, res) => {
   const q = req.user.role==='admin' ? {} : { teacherId: req.user.id };
   const weekAgo = new Date(); weekAgo.setDate(weekAgo.getDate()-7);
@@ -210,8 +190,7 @@ app.get('/api/stats', auth, async (req, res) => {
   ]);
   res.json({ students, sessions, weekSessions });
 });
- 
-// ── MESSAGES ──
+
 app.get('/api/messages', auth, async (req, res) => {
   const { studentId } = req.query;
   if (!studentId) return res.status(400).json({ error: 'studentId required' });
@@ -230,7 +209,6 @@ app.post('/api/messages', auth, async (req, res) => {
   });
   res.json({ ...msg, id: msg._id });
 });
- 
-// ── SERVE APP ──
+
 app.get('/{*path}', (req, res) => res.sendFile(path.join(__dirname, 'index.html')));
 app.listen(PORT, () => console.log(`\n🌿 Abdallah System running on port ${PORT}\n`));
